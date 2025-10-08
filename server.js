@@ -34,8 +34,8 @@ app.get("/api/data/patentscope/patents", async (req, res) => {
     const html = await page.content();
     const $ = cheerio.load(html);
 
-    // Extrair resultados da tabela
-    const results = [];
+    // Tenta parse com Cheerio
+    let results = [];
     $(".resultTable tr").each((i, el) => {
       if (i === 0) return; // pular header
       const tds = $(el).find("td");
@@ -49,17 +49,25 @@ app.get("/api/data/patentscope/patents", async (req, res) => {
       });
     });
 
-    let response;
-    if (results.length > 0) {
-      response = { query: medicine, total_results: results.length, results };
-    } else {
-      // fallback Groq caso a tabela não exista ou seletores mudem
-      const fallbackResults = groq("*[_type == 'tr']", html);
-      response = { query: medicine, total_results: fallbackResults.length, results: fallbackResults };
-      console.warn("⚠️ Nenhum resultado estruturado encontrado, fallback Groq...");
+    // Se não encontrou com Cheerio, usa Groq como fallback
+    if (results.length === 0) {
+      console.warn("⚠️ Nenhum resultado estruturado com Cheerio, fallback Groq...");
+      const rows = groq("tr", html); // retorna todos <tr>
+      results = rows.map((row) => {
+        const $row = cheerio.load(row);
+        const tds = $row("td");
+        return {
+          title: $row(tds[0]).text().trim() || null,
+          publication_number: $row(tds[1]).text().trim() || null,
+          publication_date: $row(tds[2]).text().trim() || null,
+          applicants: $row(tds[3]).text().trim() || null,
+          inventors: $row(tds[4]).text().trim() || null,
+          link: $row(tds[0]).find("a").attr("href") || null
+        };
+      }).filter(r => r.title); // remove linhas vazias
     }
 
-    res.json(response);
+    res.json({ query: medicine, total_results: results.length, results });
   } catch (err) {
     console.error("❌ Erro no parser:", err);
     res.status(500).json({ error: "Erro ao buscar patentes", details: err.message });
