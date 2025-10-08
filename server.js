@@ -1,69 +1,76 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-const winston = require('winston');
+// server.js
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
+import puppeteer from "puppeteer";
+import cheerio from "cheerio";
+import { groq } from "groq-sdk";
 
 const app = express();
+const PORT = process.env.PORT || 8080;
+
 app.use(cors());
-app.use(express.json());
+app.use(helmet());
+app.use(morgan("combined"));
 
-// Logger simples
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.json(),
-  transports: [new winston.transports.Console()]
-});
+app.get("/api/data/patentscope/patents", async (req, res) => {
+  const medicine = req.query.medicine;
+  if (!medicine) return res.status(400).json({ error: "Parametro 'medicine' é obrigatório" });
 
-// Health check
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+  console.log(`🔍 Buscando patentes para: ${medicine}`);
 
-// Rota principal: busca patentes
-app.get('/api/data/patentscope/patents', async (req, res) => {
-  const { medicine } = req.query;
-  if (!medicine) return res.status(400).json({ error: 'Parâmetro "medicine" é obrigatório.' });
-
+  let browser;
   try {
-    logger.info(`🔍 Buscando patentes para: ${medicine}`);
+    browser = await puppeteer.launch({ args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+    const page = await browser.newPage();
 
-    // URL interna que retorna JSON (simula XHR da página)
     const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
+    await page.goto(url, { waitUntil: "networkidle2" });
 
-    const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json, text/javascript'
-      }
+    // Espera a tabela de resultados aparecer
+    await page.waitForSelector(".resultTable", { timeout: 15000 }).catch(() => null);
+
+    const html = await page.content();
+    const $ = cheerio.load(html);
+
+    // Extrair resultados da tabela
+    const results = [];
+    $(".resultTable tr").each((i, el) => {
+      if (i === 0) return; // pular header
+      const tds = $(el).find("td");
+      results.push({
+        title: $(tds[0]).text().trim(),
+        publication_number: $(tds[1]).text().trim(),
+        publication_date: $(tds[2]).text().trim(),
+        applicants: $(tds[3]).text().trim(),
+        inventors: $(tds[4]).text().trim(),
+        link: $(tds[0]).find("a").attr("href") || null
+      });
     });
 
-    // Extrair registros do JSON da página
-    const records = response.data.records || []; 
+    let response;
+    if (results.length > 0) {
+      response = { query: medicine, total_results: results.length, results };
+    } else {
+      // fallback Groq caso a tabela não exista ou seletores mudem
+      const fallbackResults = groq("*[_type == 'tr']", html);
+      response = { query: medicine, total_results: fallbackResults.length, results: fallbackResults };
+      console.warn("⚠️ Nenhum resultado estruturado encontrado, fallback Groq...");
+    }
 
-    const patents = records.map(p => ({
-      title: p.title,
-      publication_number: p.pubNumber,
-      applicants: p.applicants,
-      inventors: p.inventors,
-      publication_date: p.pubDate,
-      abstract: p.abstract,
-      legal_status: p.legalStatus,
-      family: p.family,
-      link: `https://patentscope.wipo.int${p.detailUrl}`
-    }));
-
-    res.json({
-      query: medicine,
-      total_results: patents.length,
-      results: patents
-    });
-
-    logger.info(`✅ Retornados ${patents.length} registros para: ${medicine}`);
-
+    res.json(response);
   } catch (err) {
-    logger.error(err.message);
-    res.status(500).json({ error: 'Erro ao buscar patentes', details: err.message });
+    console.error("❌ Erro no parser:", err);
+    res.status(500).json({ error: "Erro ao buscar patentes", details: err.message });
+  } finally {
+    if (browser) await browser.close();
+    console.log("🧹 Browser fechado.");
   }
 });
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => logger.info(`🚀 WIPO Parser rodando na porta ${PORT}`));
+app.get("/health", (req, res) => res.send("ok"));
+
+app.listen(PORT, () => {
+  console.log(`🚀 WIPO Parser rodando na porta ${PORT}`);
+});
