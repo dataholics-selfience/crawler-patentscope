@@ -9,7 +9,6 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-const InpiCrawler = require('./crawlers/inpiCrawler'); // <- Import corrigido!
 const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
@@ -30,7 +29,7 @@ app.use(
 // Rate limit
 app.use(
   rateLimit({
-    windowMs: 60 * 1000,
+    windowMs: 60 * 1000, // 1 minuto
     max: 60
   })
 );
@@ -38,32 +37,7 @@ app.use(
 // Health check rápido para Railway
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-// INPI patents route
-app.get('/api/data/inpi/patents', async (req, res) => {
-  const { medicine } = req.query;
-  if (!medicine)
-    return res
-      .status(400)
-      .json({ success: false, message: 'Missing medicine parameter' });
-
-  const crawler = new InpiCrawler();
-  try {
-    await crawler.initialize();
-    const patents = await crawler.searchPatents(medicine);
-    res.json({ success: true, data: patents });
-  } catch (err) {
-    logger.error('INPI crawler failed', err);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch INPI patents',
-      message: err.message
-    });
-  } finally {
-    await crawler.close();
-  }
-});
-
-// Patentscope route (exemplo)
+// Patentscope route
 app.get('/api/data/patentscope', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine)
@@ -71,7 +45,11 @@ app.get('/api/data/patentscope', async (req, res) => {
       .status(400)
       .json({ success: false, message: 'Missing medicine parameter' });
 
-  const crawler = new PatentScopeCrawler();
+  const crawler = new PatentScopeCrawler({
+    username: process.env.PATENTSCOPE_USERNAME,
+    password: process.env.PATENTSCOPE_PASSWORD
+  });
+
   try {
     await crawler.initialize();
     const patents = await crawler.searchPatents(medicine);
