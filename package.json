@@ -1,40 +1,18 @@
 {
   "name": "patent-crawler-platform",
-  "version": "1.2.0",
-  "description": "Node.js REST API to extract and analyze patent data from INPI and PatentScope using Puppeteer, Cheerio and Groq",
+  "version": "1.2.1",
+  "description": "Node.js REST API para extrair patentes do WIPO em JSON",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "parse-wipo": "node wipo-parser.js",
-    "postinstall": "echo 'Dependencies installed successfully'"
+    "dev": "nodemon server.js"
   },
-  "keywords": [
-    "patents",
-    "crawler",
-    "inpi",
-    "patentscope",
-    "groq",
-    "puppeteer",
-    "cheerio",
-    "ocr"
-  ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "helmet": "^7.0.0",
-    "morgan": "^1.10.0",
-    "compression": "^1.7.4",
-    "dotenv": "^16.3.1",
-    "puppeteer": "19.11.1",
-    "winston": "^3.11.0",
-    "express-rate-limit": "^7.1.5",
-    "groq-sdk": "^0.3.0",
     "axios": "^1.7.0",
-    "cheerio": "^1.0.0-rc.12",
-    "body-parser": "^1.20.2"
+    "winston": "^3.11.0",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
