@@ -1,53 +1,77 @@
-import axios from 'axios';
-import cheerio from 'cheerio';
-import fs from 'fs';
-import dotenv from 'dotenv';
+// wipo-parser.js
+const express = require('express');
+const cors = require('cors');
+const puppeteer = require('puppeteer');
+const cheerio = require('cheerio');
 
-dotenv.config();
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-const WIPO_URL = process.env.WIPO_URL || 'https://example.com/sample-patent';
+/**
+ * GET /api/data/patentscope/patents?medicine=semaglutide
+ * Retorna JSON completo das patentes relacionadas à medicina passada
+ */
+app.get('/api/data/patentscope/patents', async (req, res) => {
+  const { medicine } = req.query;
 
-async function fetchHTML(url) {
-  try {
-    const { data } = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Node.js)'
-      }
-    });
-    return data;
-  } catch (err) {
-    console.error('Erro ao buscar HTML:', err.message);
-    throw err;
+  if (!medicine) {
+    return res.status(400).json({ error: 'Parâmetro "medicine" é obrigatório.' });
   }
-}
 
-function parsePatentHTML(html) {
-  const $ = cheerio.load(html);
+  try {
+    const url = `https://patentscope.wipo.int/search/en/detail.jsf?query=${encodeURIComponent(medicine)}`;
 
-  // Exemplo de parse
-  const title = $('title').text().trim();
-  const description = $('meta[name="description"]').attr('content') || '';
-  const inventors = [];
-  $('meta[name="inventor"]').each((i, el) => {
-    inventors.push($(el).attr('content'));
-  });
+    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'networkidle2' });
 
-  return {
-    title,
-    description,
-    inventors
-  };
-}
+    const html = await page.content();
+    const $ = cheerio.load(html);
 
-async function main() {
-  console.log('Iniciando parser WIPO...');
-  const html = await fetchHTML(WIPO_URL);
-  const patentData = parsePatentHTML(html);
+    const patents = [];
 
-  // Salva JSON no filesystem (Railway mantém persistência limitada)
-  fs.writeFileSync('wipo-patent.json', JSON.stringify(patentData, null, 2));
-  console.log('JSON gerado: wipo-patent.json');
-  console.log(patentData);
-}
+    $('.resultItem').each((i, el) => {
+      const $el = $(el);
 
-main();
+      // Tenta extrair campos principais
+      const title = $el.find('.title').text().trim();
+      const publication_number = $el.find('.pubNumber').text().trim();
+      const applicants = $el.find('.applicant').text().trim();
+      const inventors = $el.find('.inventor').text().trim();
+      const publication_date = $el.find('.pubDate').text().trim();
+      const abstract_text = $el.find('.abstract').text().trim();
+      const status = $el.find('.legalStatus').text().trim();
+      const family = $el.find('.family').text().trim();
+      const link = 'https://patentscope.wipo.int' + $el.find('a').attr('href');
+
+      patents.push({
+        title,
+        publication_number,
+        applicants,
+        inventors,
+        publication_date,
+        abstract: abstract_text,
+        legal_status: status,
+        family: family,
+        link,
+      });
+    });
+
+    await browser.close();
+
+    res.json({
+      query: medicine,
+      total_results: patents.length,
+      results: patents,
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao processar a busca', details: error.message });
+  }
+});
+
+// Start do servidor (Railway usa process.env.PORT)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`WIPO Parser rodando na porta ${PORT}...`));
