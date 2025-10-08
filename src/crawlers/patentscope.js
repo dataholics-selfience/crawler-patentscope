@@ -1,78 +1,71 @@
 const puppeteer = require('puppeteer');
+const cheerio = require('cheerio');
+const axios = require('axios');
+const logger = require('../utils/logger');
 
 class PatentScopeCrawler {
-  constructor(options = {}) {
-    this.groqApiKey = options.groqApiKey || null;
+  constructor({ groqApiKey }) {
+    this.groqApiKey = groqApiKey;
     this.browser = null;
   }
 
   async initialize() {
-    console.log('🔹 Inicializando Puppeteer...');
+    logger.info('🔹 Inicializando Puppeteer...');
     this.browser = await puppeteer.launch({
-      headless: 'new',
+      headless: "new",
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
   }
 
   async searchPatents(medicine) {
-    if (!this.browser) await this.initialize();
-
-    const page = await this.browser.newPage();
-    page.setDefaultNavigationTimeout(90000);
-
-    const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(
-      medicine
-    )})`;
-
-    console.log(`🌐 Acessando ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'networkidle2' });
+      const page = await this.browser.newPage();
+      const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
 
-      // Espera seletor alternativo
-      console.log('⏳ Aguardando resultados...');
-      await page.waitForSelector('a.titleLink, .resultList, .results, table', {
-        timeout: 60000
-      });
+      logger.info(`🌐 Acessando ${url}`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-      console.log('✅ Resultados carregados, extraindo...');
+      logger.info('⏳ Aguardando resultados...');
+      await page.waitForSelector('.resultsTable', { timeout: 25000 }).catch(() => null);
 
-      const results = await page.evaluate(() => {
-        const items = [];
-        document.querySelectorAll('a.titleLink').forEach(a => {
-          const row = a.closest('tr');
-          const cells = row ? row.querySelectorAll('td') : [];
-          items.push({
-            title: a.innerText.trim(),
-            link: a.href,
-            publicationNumber: cells[0]?.innerText?.trim() || '',
-            applicant: cells[2]?.innerText?.trim() || '',
-            date: cells[3]?.innerText?.trim() || ''
-          });
-        });
-        return items;
-      });
+      const html = await page.content();
 
-      if (!results || results.length === 0) {
-        console.warn('⚠️ Nenhum resultado estruturado encontrado, tentando fallback...');
-        const html = await page.content();
-        return [{ rawHtmlSnippet: html.slice(0, 1000) }];
+      logger.info('✅ Resultados carregados, extraindo...');
+      const patents = this.extractWithCheerio(html);
+
+      if (patents.length === 0) {
+        logger.warn('⚠️ Nenhum resultado estruturado encontrado, fallback Groq/RAW...');
+        return [{ rawHtmlSnippet: html }];
       }
 
-      console.log(`✅ ${results.length} patentes encontradas.`);
-      return results;
-    } catch (error) {
-      console.error('❌ Patentscope scraping falhou:', error);
-      throw error;
-    } finally {
-      await page.close();
+      return patents;
+    } catch (err) {
+      logger.error('Patentscope scraping failed:', err);
+      return [];
     }
+  }
+
+  extractWithCheerio(html) {
+    const $ = cheerio.load(html);
+    const results = [];
+
+    $('.resultsTable tr').each((i, row) => {
+      const title = $(row).find('.titleColumn').text().trim();
+      const number = $(row).find('.numberColumn').text().trim();
+      const link = $(row).find('.titleColumn a').attr('href');
+
+      if (title && number) {
+        results.push({ title, number, link });
+      }
+    });
+
+    return results;
   }
 
   async close() {
     if (this.browser) {
-      console.log('🧹 Fechando browser...');
       await this.browser.close();
-      this.browser = null;
+      logger.info('🧹 Browser fechado.');
     }
   }
 }
