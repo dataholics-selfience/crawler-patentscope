@@ -71,3 +71,4 @@ class PatentScopeCrawler {
 }
 
 module.exports = PatentScopeCrawler;
+
