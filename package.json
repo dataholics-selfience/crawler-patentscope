@@ -1,7 +1,7 @@
 {
   "name": "patent-crawler-platform",
-  "version": "1.1.0",
-  "description": "REST API for extracting and analyzing patent data from INPI and PatentScope with Puppeteer, Cheerio, Groq and OCR fallback",
+  "version": "1.2.0",
+  "description": "Node.js REST API to extract and analyze patent data from INPI and PatentScope using Puppeteer, Cheerio and Groq",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -14,11 +14,9 @@
     "inpi",
     "patentscope",
     "groq",
-    "cheerio",
     "puppeteer",
-    "ocr",
-    "scraping",
-    "api"
+    "cheerio",
+    "ocr"
   ],
   "author": "",
   "license": "ISC",
@@ -29,7 +27,7 @@
     "morgan": "^1.10.0",
     "compression": "^1.7.4",
     "dotenv": "^16.3.1",
-    "puppeteer": "^19.11.1",
+    "puppeteer": "19.11.1",
     "winston": "^3.11.0",
     "express-rate-limit": "^7.1.5",
     "groq-sdk": "^0.3.0",
@@ -40,6 +38,6 @@
     "nodemon": "^3.0.1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
