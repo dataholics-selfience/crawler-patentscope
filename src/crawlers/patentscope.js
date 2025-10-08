@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer');
+const { groqFetch } = require('groq-sdk'); // Ajuste conforme seu SDK atual
 const logger = require('../utils/logger');
 
 class PatentScopeCrawler {
@@ -10,47 +11,58 @@ class PatentScopeCrawler {
   async initialize() {
     logger.info('Initializing PatentScope crawler...');
     this.browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      headless: "new",
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
     this.page = await this.browser.newPage();
-    await this.page.setViewport({ width: 1200, height: 800 });
     logger.info('PatentScope crawler initialized');
   }
 
   async searchPatents(medicine) {
-    const query = encodeURIComponent(medicine);
-    const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${query})`;
-
-    logger.info(`Navigating to: ${url}`);
-    await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    const queryUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
+    logger.info(`Navigating to: ${queryUrl}`);
 
     try {
-      // Espera pelos resultados aparecerem (cada resultado é .result-item)
-      await this.page.waitForSelector('.result-item', { timeout: 15000 });
-    } catch (err) {
-      logger.error('No results loaded', err);
-      throw new Error('No results found or page structure changed');
+      await this.page.goto(queryUrl, { waitUntil: 'networkidle2' });
+
+      // Espera pela tabela de resultados
+      await this.page.waitForSelector('.result-table, .results-table', { timeout: 20000 });
+
+      // Extrai os dados
+      const patents = await this.page.$$eval('.result-table tbody tr', rows =>
+        rows.map(row => {
+          const title = row.querySelector('td.title a')?.innerText.trim() || '';
+          const link = row.querySelector('td.title a')?.href || '';
+          const publicationNumber = row.querySelector('td.publication-number')?.innerText.trim() || '';
+          const date = row.querySelector('td.publication-date')?.innerText.trim() || '';
+          const applicants = row.querySelector('td.applicants')?.innerText.trim() || '';
+          return { title, link, publicationNumber, date, applicants };
+        })
+      );
+
+      if (!patents.length) {
+        throw new Error('No results found or page structure changed');
+      }
+
+      return patents;
+
+    } catch (puppeteerError) {
+      logger.warn('Puppeteer failed, trying Groq fallback...', puppeteerError);
+
+      // Fallback via Groq
+      try {
+        const groqQuery = `*[_type == "patents" && medicine match "${medicine}"]{title, link, publicationNumber, date, applicants}`;
+        const groqResults = await groqFetch(groqQuery, process.env.GROQ_API_KEY);
+        if (!groqResults.length) throw new Error('Groq returned empty results');
+        return groqResults;
+      } catch (groqError) {
+        logger.error('Groq fallback failed', groqError);
+        throw new Error(`No results found via Puppeteer or Groq for ${medicine}`);
+      }
     }
-
-    // Extrai os dados de cada patente
-    const patents = await this.page.$$eval('.result-item', items =>
-      items.map(item => {
-        const title = item.querySelector('.title a')?.innerText.trim() || '';
-        const link = item.querySelector('.title a')?.href || '';
-        const publicationNumber = item.querySelector('.publication-number')?.innerText.trim() || '';
-        const date = item.querySelector('.publication-date')?.innerText.trim() || '';
-        const applicants = item.querySelector('.applicants')?.innerText.trim() || '';
-        return { title, link, publicationNumber, date, applicants };
-      })
-    );
-
-    logger.info(`Found ${patents.length} patents for "${medicine}"`);
-    return patents;
   }
 
   async close() {
-    if (this.page) await this.page.close();
     if (this.browser) await this.browser.close();
     logger.info('PatentScope crawler closed');
   }
