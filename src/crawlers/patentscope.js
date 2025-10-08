@@ -7,8 +7,9 @@ class PatentScopeCrawler {
   }
 
   async initialize() {
+    console.log('🔹 Inicializando Puppeteer...');
     this.browser = await puppeteer.launch({
-      headless: true,
+      headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
   }
@@ -17,43 +18,50 @@ class PatentScopeCrawler {
     if (!this.browser) await this.initialize();
 
     const page = await this.browser.newPage();
-    page.setDefaultNavigationTimeout(60000);
+    page.setDefaultNavigationTimeout(90000);
 
     const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(
       medicine
     )})`;
 
+    console.log(`🌐 Acessando ${url}`);
     try {
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await page.goto(url, { waitUntil: 'networkidle2' });
 
-      // Espera o JS carregar os resultados
-      await page.waitForFunction(
-        () => document.querySelectorAll('.resultList table tbody tr').length > 0,
-        { timeout: 25000 }
-      );
+      // Espera seletor alternativo
+      console.log('⏳ Aguardando resultados...');
+      await page.waitForSelector('a.titleLink, .resultList, .results, table', {
+        timeout: 60000
+      });
+
+      console.log('✅ Resultados carregados, extraindo...');
 
       const results = await page.evaluate(() => {
-        const rows = document.querySelectorAll('.resultList table tbody tr');
-        return Array.from(rows).map(row => {
-          const cells = row.querySelectorAll('td');
-          const titleEl = row.querySelector('a.titleLink');
-          return {
-            title: titleEl ? titleEl.innerText.trim() : cells[1]?.innerText?.trim() || '',
-            link: titleEl ? titleEl.href : '',
+        const items = [];
+        document.querySelectorAll('a.titleLink').forEach(a => {
+          const row = a.closest('tr');
+          const cells = row ? row.querySelectorAll('td') : [];
+          items.push({
+            title: a.innerText.trim(),
+            link: a.href,
             publicationNumber: cells[0]?.innerText?.trim() || '',
             applicant: cells[2]?.innerText?.trim() || '',
             date: cells[3]?.innerText?.trim() || ''
-          };
+          });
         });
+        return items;
       });
 
       if (!results || results.length === 0) {
-        throw new Error('No results found or unable to parse table');
+        console.warn('⚠️ Nenhum resultado estruturado encontrado, tentando fallback...');
+        const html = await page.content();
+        return [{ rawHtmlSnippet: html.slice(0, 1000) }];
       }
 
+      console.log(`✅ ${results.length} patentes encontradas.`);
       return results;
     } catch (error) {
-      console.error('Patentscope scraping failed:', error);
+      console.error('❌ Patentscope scraping falhou:', error);
       throw error;
     } finally {
       await page.close();
@@ -62,6 +70,7 @@ class PatentScopeCrawler {
 
   async close() {
     if (this.browser) {
+      console.log('🧹 Fechando browser...');
       await this.browser.close();
       this.browser = null;
     }
