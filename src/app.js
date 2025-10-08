@@ -9,7 +9,7 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-app.get('/api/data/patentscope/patents', async (req, res) => {
+const PatentScopeCrawler = require('./crawlers/patentscope');
 
 const app = express();
 
@@ -29,25 +29,25 @@ app.use(
 // Rate limit
 app.use(
   rateLimit({
-    windowMs: 60 * 1000, // 1 minuto
+    windowMs: 60 * 1000,
     max: 60
   })
 );
 
-// Health check rápido para Railway
+// Healthcheck simples
 app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
 
-// Patentscope route
-app.get('/api/data/patentscope', async (req, res) => {
+// Rota PatentScope
+app.get('/api/data/patentscope/patents', async (req, res) => {
   const { medicine } = req.query;
   if (!medicine)
     return res
       .status(400)
       .json({ success: false, message: 'Missing medicine parameter' });
 
+  // Inicializa crawler aqui, dentro da rota
   const crawler = new PatentScopeCrawler({
-    username: process.env.PATENTSCOPE_USERNAME,
-    password: process.env.PATENTSCOPE_PASSWORD
+    groqApiKey: process.env.GROQ_API_KEY
   });
 
   try {
@@ -69,7 +69,7 @@ app.get('/api/data/patentscope', async (req, res) => {
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
+  logger.info(`PatentScope server running on port ${PORT}`);
 });
 
 module.exports = app;
