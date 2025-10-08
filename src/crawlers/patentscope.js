@@ -1,137 +1,164 @@
 const puppeteer = require('puppeteer');
-const axios = require('axios');
-const logger = require('../utils/logger');
+const GroqParser = require('../services/groqParser'); // Certifique-se que exista
 
 class PatentScopeCrawler {
-  constructor() {
+  constructor(credentials = null) {
     this.browser = null;
-    this.page = null;
+    this.credentials = credentials;
+    this.groqParser = new GroqParser();
   }
 
   async initialize() {
-    logger.info('Initializing PatentScope crawler');
+    console.log('Initializing PatentScope crawler');
     this.browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
-    this.page = await this.browser.newPage();
-    await this.page.setViewport({ width: 1280, height: 800 });
-    logger.info('PatentScope crawler initialized');
+    console.log('PatentScope crawler initialized');
   }
 
-  async detectFields() {
-    logger.info('Detecting search fields on PatentScope...');
+  async detectFieldsIntelligently(page) {
+    console.log('Detecting form fields...');
+    const html = await page.content();
+    const groqFields = await this.groqParser.detectFields(html);
 
-    // Tenta heurística padrão primeiro
-    const fallbackSelectors = [
-      'input[name="searchText"]',
-      'input[type="text"]',
-      'input[placeholder*="Search"]',
-      '#simpleSearchForm input',
-      'form[action*="search"] input'
-    ];
-
-    for (const selector of fallbackSelectors) {
-      const exists = await this.page.$(selector);
-      if (exists) {
-        logger.info(`Detected search field via fallback: ${selector}`);
-        return selector;
-      }
+    if (groqFields && groqFields.loginField && groqFields.passwordField && groqFields.searchField) {
+      console.log('Groq detected fields:', groqFields);
+      return groqFields;
     }
 
-    // Usa GROQ como fallback inteligente
-    try {
-      const screenshot = await this.page.screenshot({ encoding: 'base64' });
-      const groqResp = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        {
-          model: 'llama-3.1-70b-versatile',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a web structure analyzer. Identify the selector of the search input on the given HTML screenshot.'
-            },
-            {
-              role: 'user',
-              content:
-                'Here is a screenshot of the PatentScope search page (base64): ' +
-                screenshot
-            }
-          ]
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-          }
+    console.log('Groq failed, using fallback detection');
+    return await this.fallbackDetection(page);
+  }
+
+  async fallbackDetection(page) {
+    const detectedFields = await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input'));
+      const fields = { loginField: null, passwordField: null, searchField: null, submitSelector: 'input[type="submit"]' };
+
+      for (const input of inputs) {
+        const name = (input.name || '').toLowerCase();
+        const id = (input.id || '').toLowerCase();
+        const attrs = name + id;
+
+        if (!fields.loginField && (attrs.includes('login') || attrs.includes('usuario'))) fields.loginField = input.name || input.id;
+        if (!fields.passwordField && (input.type === 'password' || attrs.includes('senha'))) fields.passwordField = input.name || input.id;
+        if (!fields.searchField && (attrs.includes('expressao') || attrs.includes('palavra'))) fields.searchField = input.name || input.id;
+      }
+
+      return fields;
+    });
+
+    const fields = {
+      loginField: detectedFields.loginField || 'username',
+      passwordField: detectedFields.passwordField || 'password',
+      searchField: detectedFields.searchField || 'query',
+      submitSelector: 'input[type="submit"], button[type="submit"], button'
+    };
+
+    console.log('Fallback fields:', fields);
+    return fields;
+  }
+
+  async performLogin(page, fields) {
+    console.log('Performing login...');
+    if (!this.credentials) return console.log('No credentials provided, skipping login');
+
+    const loginInput = await page.$(`input[name="${fields.loginField}"], #${fields.loginField}`);
+    const passwordInput = await page.$(`input[name="${fields.passwordField}"], #${fields.passwordField}`);
+
+    if (!loginInput || !passwordInput) throw new Error('Login or password field not found');
+
+    await loginInput.type(this.credentials.username, { delay: 100 });
+    await passwordInput.type(this.credentials.password, { delay: 100 });
+
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+      page.click(fields.submitSelector)
+    ]);
+
+    const content = await page.content();
+    if (content.includes('Login failed')) throw new Error('Login failed');
+
+    console.log('Login successful');
+  }
+
+  async performSearch(page, fields, searchTerm) {
+    console.log('Performing search...');
+    const searchInput = await page.$(`input[name="${fields.searchField}"], #${fields.searchField}`);
+    if (!searchInput) throw new Error('Search field not found');
+
+    await searchInput.type(searchTerm, { delay: 100 });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+      page.click(fields.submitSelector)
+    ]);
+
+    await page.waitForTimeout(2000);
+    console.log('Search completed');
+  }
+
+  async extractResults(page) {
+    console.log('Extracting results...');
+    const results = await page.evaluate(() => {
+      const patents = [];
+      const rows = document.querySelectorAll('table tr');
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 3) {
+          patents.push({
+            processNumber: cells[0]?.innerText.trim() || '',
+            title: cells[1]?.innerText.trim() || '',
+            depositDate: cells[2]?.innerText.trim() || '',
+            applicant: cells[3]?.innerText.trim() || '',
+            fullText: row.innerText.trim(),
+            source: 'PatentScope'
+          });
         }
-      );
+      });
+      return patents;
+    });
 
-      const content = groqResp.data.choices?.[0]?.message?.content || '';
-      const selector = content.match(/[#.a-zA-Z0-9_\-\[\]="']+/)?.[0];
-      if (selector) {
-        logger.info(`GROQ detected selector: ${selector}`);
-        return selector;
-      }
-    } catch (err) {
-      logger.error('GROQ detection failed', err);
-    }
-
-    throw new Error('Search field not found');
+    console.log(`Extracted ${results.length} patents`);
+    return results;
   }
 
-  async searchPatents(term) {
-    logger.info(`Starting PatentScope search for: ${term}`);
+  async searchPatents(medicine) {
+    console.log(`Starting PatentScope search for: ${medicine}`);
+    const page = await this.browser.newPage();
+
     try {
-      await this.page.goto('https://patentscope.wipo.int/search/en/search.jsf', {
-        waitUntil: 'domcontentloaded',
-        timeout: 60000
-      });
+      const url = 'https://patentscope.wipo.int/search/en/basic.jsf'; // Ajuste se necessário
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      await page.waitForTimeout(2000);
 
-      const searchSelector = await this.detectFields();
-      await this.page.waitForSelector(searchSelector, { timeout: 10000 });
+      // Login se necessário
+      const needsLogin = await page.evaluate(() => document.body.innerText.includes('Login'));
+      if (needsLogin && this.credentials) {
+        const loginFields = await this.detectFieldsIntelligently(page);
+        await this.performLogin(page, loginFields);
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await page.waitForTimeout(1000);
+      }
 
-      await this.page.click(searchSelector, { clickCount: 3 });
-      await this.page.type(searchSelector, term);
-      await Promise.all([
-        this.page.keyboard.press('Enter'),
-        this.page.waitForNavigation({ waitUntil: 'domcontentloaded' })
-      ]);
+      const searchFields = await this.detectFieldsIntelligently(page);
+      await this.performSearch(page, searchFields, medicine);
 
-      logger.info('Extracting results...');
-      const results = await this.page.evaluate(() => {
-        const rows = Array.from(
-          document.querySelectorAll('.resultItem, .result')
-        );
-        return rows.slice(0, 10).map(r => ({
-          title: r.querySelector('a, .title')?.innerText?.trim() || null,
-          applicant:
-            r.querySelector('.applicant, .assignee')?.innerText?.trim() || null,
-          publication:
-            r.querySelector('.pubnum, .patentNumber')?.innerText?.trim() ||
-            null,
-          date:
-            r.querySelector('.pubdate, .date')?.innerText?.trim() || null,
-          link:
-            r.querySelector('a')?.href?.startsWith('http')
-              ? r.querySelector('a').href
-              : null
-        }));
-      });
-
-      logger.info(`Found ${results.length} results`);
-      return results;
+      const patents = await this.extractResults(page);
+      console.log(`PatentScope search completed: ${patents.length} patents found`);
+      return patents;
     } catch (err) {
-      logger.error('PatentScope search failed', err);
+      console.error('PatentScope search error:', err.message);
       throw err;
+    } finally {
+      await page.close();
     }
   }
 
   async close() {
     if (this.browser) {
       await this.browser.close();
-      logger.info('PatentScope crawler closed');
+      console.log('PatentScope crawler closed');
     }
   }
 }
