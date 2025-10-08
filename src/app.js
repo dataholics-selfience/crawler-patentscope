@@ -9,7 +9,7 @@ const logger = require('./utils/logger');
 
 dotenv.config();
 
-const PatentScopeCrawler = require('./crawlers/patentscope');
+app.get('/api/data/patentscope/patents', async (req, res) => {
 
 const app = express();
 
