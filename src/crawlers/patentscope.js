@@ -1,115 +1,68 @@
+// src/crawlers/patentscope.js
 const puppeteer = require('puppeteer');
-const axios = require('axios');
 const logger = require('../utils/logger');
 
 class PatentScopeCrawler {
-  constructor(options = {}) {
-    this.groqApiKey = options.groqApiKey || process.env.GROQ_API_KEY;
+  constructor() {
     this.browser = null;
     this.page = null;
   }
 
   async initialize() {
+    logger.info('Initializing PatentScope crawler...');
+    this.browser = await puppeteer.launch({
+      headless: 'new', // nova implementação de headless
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    this.page = await this.browser.newPage();
+    // Timeout maior para sites lentos
+    this.page.setDefaultNavigationTimeout(60000);
+    this.page.setDefaultTimeout(60000);
+    logger.info('PatentScope crawler initialized');
+  }
+
+  async searchPatents(medicine) {
+    if (!medicine) throw new Error('Medicine parameter is required');
+
     try {
-      this.browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        headless: true
+      // Monta a URL de resultados diretamente
+      const baseUrl = 'https://patentscope.wipo.int/search/en/result.jsf';
+      const query = `FP:(${medicine})`;
+      const url = `${baseUrl}?query=${encodeURIComponent(query)}`;
+
+      logger.info(`Opening Patentscope URL: ${url}`);
+      await this.page.goto(url, { waitUntil: 'networkidle2' });
+
+      // Espera a tabela de resultados aparecer
+      await this.page.waitForSelector('.result-table, .results-table', { timeout: 15000 });
+
+      // Extrai os dados
+      const patents = await this.page.$$eval('.result-table tr, .results-table tr', rows => {
+        return rows.slice(1).map(row => {
+          const cells = row.querySelectorAll('td');
+          return {
+            title: cells[0]?.innerText.trim() || '',
+            publicationNumber: cells[1]?.innerText.trim() || '',
+            publicationDate: cells[2]?.innerText.trim() || '',
+            applicant: cells[3]?.innerText.trim() || '',
+            country: cells[4]?.innerText.trim() || ''
+          };
+        });
       });
-      this.page = await this.browser.newPage();
-      logger.info('PatentScope crawler initialized');
+
+      logger.info(`Found ${patents.length} patents`);
+      return patents;
+
     } catch (err) {
-      logger.error('Failed to initialize Puppeteer', err);
+      logger.error('Patentscope search failed', err);
       throw err;
     }
   }
 
   async close() {
-    if (this.browser) {
-      await this.browser.close();
-      logger.info('PatentScope crawler closed');
-    }
-  }
-
-  async searchPatents(medicine) {
-    try {
-      // Passo 1: tentar via Groq se disponível
-      if (this.groqApiKey) {
-        try {
-          const response = await axios.post(
-            'https://api.groq.ai/v1/query',
-            {
-              query: `
-                query {
-                  patents(medicine: "${medicine}") {
-                    title
-                    publicationNumber
-                    publicationDate
-                    applicants
-                    abstract
-                    url
-                  }
-                }
-              `
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${this.groqApiKey}`,
-                'Content-Type': 'application/json'
-              },
-              timeout: 30000
-            }
-          );
-
-          if (response.data && response.data.patents) {
-            logger.info(`Groq returned ${response.data.patents.length} results`);
-            return response.data.patents;
-          }
-        } catch (groqErr) {
-          logger.warn('Groq query failed, falling back to Puppeteer', groqErr.message);
-        }
-      }
-
-      // Passo 2: fallback com Puppeteer
-      const searchUrl = `https://patentscope.wipo.int/search/en/search.jsf`;
-      await this.page.goto(searchUrl, { waitUntil: 'networkidle2' });
-
-      // Digitar no campo de busca
-      const searchInputSelector = 'input[name="simpleSearch:searchExpression"]';
-      await this.page.waitForSelector(searchInputSelector, { timeout: 10000 });
-      await this.page.type(searchInputSelector, medicine);
-
-      // Clicar em pesquisar
-      const searchButtonSelector = 'input[type="submit"], button[type="submit"]';
-      await this.page.click(searchButtonSelector);
-
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
-
-      // Extrair resultados
-      const patents = await this.page.evaluate(() => {
-        const rows = document.querySelectorAll('table.results tr');
-        const results = [];
-        rows.forEach(row => {
-          const tds = row.querySelectorAll('td');
-          if (tds.length) {
-            results.push({
-              title: tds[0]?.innerText.trim(),
-              publicationNumber: tds[1]?.innerText.trim(),
-              publicationDate: tds[2]?.innerText.trim(),
-              applicants: tds[3]?.innerText.trim(),
-              abstract: tds[4]?.innerText.trim(),
-              url: tds[0]?.querySelector('a')?.href || ''
-            });
-          }
-        });
-        return results;
-      });
-
-      logger.info(`Puppeteer returned ${patents.length} results`);
-      return patents;
-    } catch (err) {
-      logger.error('PatentScope search failed', err);
-      throw err;
-    }
+    if (this.page) await this.page.close();
+    if (this.browser) await this.browser.close();
+    logger.info('PatentScope crawler closed');
   }
 }
 
