@@ -1,39 +1,69 @@
-const app = require('./src/app');
-const logger = require('./src/utils/logger');
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const winston = require('winston');
 
-const PORT = process.env.PORT || 3000;
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-const server = app.listen(PORT, () => {
-  logger.info(`Patent Crawler API server running on port ${PORT}`, {
-    port: PORT,
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString()
-  });
+// Logger simples
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [new winston.transports.Console()]
 });
 
-// Graceful shutdown handling for Railway
-const shutdown = (signal) => {
-  logger.info(`${signal} received, shutting down gracefully`);
-  server.close(() => {
-    logger.info('Process terminated');
-    process.exit(0);
-  });
-};
+// Health check
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+// Rota principal: busca patentes
+app.get('/api/data/patentscope/patents', async (req, res) => {
+  const { medicine } = req.query;
+  if (!medicine) return res.status(400).json({ error: 'Parâmetro "medicine" é obrigatório.' });
 
-// Handle unhandled promise rejections safely (log only — don't kill process)
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', { promise, reason });
-  // não encerra o servidor automaticamente para não interromper INPI
+  try {
+    logger.info(`🔍 Buscando patentes para: ${medicine}`);
+
+    // URL interna que retorna JSON (simula XHR da página)
+    const url = `https://patentscope.wipo.int/search/en/result.jsf?query=FP:(${encodeURIComponent(medicine)})`;
+
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json, text/javascript'
+      }
+    });
+
+    // Extrair registros do JSON da página
+    const records = response.data.records || []; 
+
+    const patents = records.map(p => ({
+      title: p.title,
+      publication_number: p.pubNumber,
+      applicants: p.applicants,
+      inventors: p.inventors,
+      publication_date: p.pubDate,
+      abstract: p.abstract,
+      legal_status: p.legalStatus,
+      family: p.family,
+      link: `https://patentscope.wipo.int${p.detailUrl}`
+    }));
+
+    res.json({
+      query: medicine,
+      total_results: patents.length,
+      results: patents
+    });
+
+    logger.info(`✅ Retornados ${patents.length} registros para: ${medicine}`);
+
+  } catch (err) {
+    logger.error(err.message);
+    res.status(500).json({ error: 'Erro ao buscar patentes', details: err.message });
+  }
 });
 
-// Catch uncaught exceptions without stopping other services
-process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception:', err);
-  // não encerra o servidor automaticamente
-});
-
-module.exports = server;
-
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => logger.info(`🚀 WIPO Parser rodando na porta ${PORT}`));
