@@ -1,99 +1,134 @@
 import express from "express";
 import puppeteer from "puppeteer";
-import fetch from "node-fetch";
+import cheerio from "cheerio";
+import Groq from "groq-sdk";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-app.get("/health", (req, res) => {
-  res.status(200).send("OK");
+// Configuração do cliente Groq (para fallback)
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY || "sk-fake-for-local"
 });
 
-app.get("/api/data/patentscope/patents", async (req, res) => {
-  const medicine = req.query.medicine;
-  console.log(`🔍 Buscando patentes WIPO para: ${medicine}`);
-
-  if (!medicine) {
-    return res.status(400).json({ error: "Parâmetro 'medicine' é obrigatório" });
-  }
-
+// Função robusta para renderizar e capturar HTML
+async function fetchRenderedHTML(url, retries = 3) {
+  let browser;
   try {
-    const html = await fetchRenderedHTML(`https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`);
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+    const page = await browser.newPage();
 
-    const parsed = extractPatentData(html);
-
-    // Se não encontrou nada, tenta fallback Groq
-    if (!parsed || parsed.length === 0) {
-      console.log("⚠️ Nenhum resultado direto — tentando fallback Groq...");
-      const groqData = await fallbackGroq(html, medicine);
-      return res.json({ source: "groq", data: groqData });
-    }
-
-    return res.json({ source: "wipo", data: parsed });
-
-  } catch (error) {
-    console.error("❌ Erro geral:", error);
-    return res.status(500).json({ error: "Falha ao buscar dados da WIPO" });
-  }
-});
-
-async function fetchRenderedHTML(url) {
-  console.log("🌐 Renderizando página com Puppeteer:", url);
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
-  });
-
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await new Promise(r => setTimeout(r, 3000)); // substitui page.waitForTimeout
-
-  const content = await page.content();
-  await browser.close();
-  return content;
-}
-
-function extractPatentData(html) {
-  const regex = /<div class="resultTitle">([\s\S]*?)<\/div>/g;
-  const matches = [...html.matchAll(regex)];
-  return matches.map(m => {
-    const raw = m[1].replace(/<[^>]*>?/gm, "").trim();
-    return { title: raw };
-  });
-}
-
-async function fallbackGroq(html, query) {
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${GROQ_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "llama-3.1-70b-versatile",
-        messages: [
-          {
-            role: "system",
-            content: "Você é um especialista em extração de dados de patentes da WIPO."
-          },
-          {
-            role: "user",
-            content: `Extraia as patentes mencionadas relacionadas ao termo '${query}' deste HTML:\n${html.substring(0, 4000)}`
-          }
-        ]
-      })
+    // Bloqueia recursos pesados
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const type = req.resourceType();
+      if (["image", "stylesheet", "font", "media"].includes(type)) req.abort();
+      else req.continue();
     });
 
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || "";
-    return [{ parsed_text: text }];
+    // Navega e espera o conteúdo
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+    await page.waitForSelector("table.search-result", { timeout: 20000 });
+
+    const html = await page.content();
+    await browser.close();
+    return html;
+
   } catch (err) {
-    console.error("⚠️ Falha no fallback Groq:", err);
-    return [];
+    if (browser) await browser.close();
+    console.warn(`⚠️ Tentativa falhou (${3 - retries + 1}): ${err.message}`);
+    if (retries > 0) return fetchRenderedHTML(url, retries - 1);
+    throw new Error("Falha após múltiplas tentativas");
   }
 }
+
+// Parser principal WIPO
+async function parseWIPOResults(html) {
+  const $ = cheerio.load(html);
+  const results = [];
+
+  $("table.search-result tbody tr").each((i, el) => {
+    const title = $(el).find("a").first().text().trim();
+    const link = $(el).find("a").first().attr("href");
+    const date = $(el).find("td:nth-child(3)").text().trim();
+
+    if (title && link) {
+      results.push({
+        title,
+        link: link.startsWith("http")
+          ? link
+          : `https://patentscope.wipo.int${link}`,
+        date
+      });
+    }
+  });
+
+  return results;
+}
+
+// Fallback com Groq
+async function groqFallback(query) {
+  const prompt = `
+Extraia até 10 patentes recentes relacionadas ao termo "${query}".
+Retorne JSON com campos: title, publication_date, applicant, link (se disponível).
+Fontes preferenciais: WIPO, EPO, USPTO, INPI.
+`;
+  const response = await groq.chat.completions.create({
+    model: "llama-3.1-70b-versatile",
+    messages: [
+      { role: "system", content: "Você é um parser de dados técnicos de patentes." },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0.3
+  });
+
+  try {
+    const text = response.choices[0].message.content;
+    return JSON.parse(text);
+  } catch {
+    return [{ error: "Groq fallback sem dados parseáveis" }];
+  }
+}
+
+// Endpoint principal
+app.get("/api/data/patentscope/patents", async (req, res) => {
+  const medicine = req.query.medicine;
+  if (!medicine)
+    return res.status(400).json({ error: "Faltou parâmetro 'medicine'" });
+
+  const searchURL = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(
+    medicine
+  )}`;
+
+  console.log(`🔍 Buscando patentes WIPO para: ${medicine}`);
+  console.log(`🌐 URL: ${searchURL}`);
+
+  try {
+    const html = await fetchRenderedHTML(searchURL);
+    const data = await parseWIPOResults(html);
+
+    if (data.length === 0) throw new Error("Nenhum resultado válido encontrado");
+
+    res.json({
+      source: "wipo",
+      count: data.length,
+      data
+    });
+
+  } catch (err) {
+    console.error("❌ Erro geral:", err);
+    console.log("🔁 Ativando fallback Groq...");
+
+    const fallback = await groqFallback(medicine);
+    res.json({
+      source: "groq_fallback",
+      data: fallback
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`🚀 WIPO Parser robusto rodando na porta ${PORT}`);
