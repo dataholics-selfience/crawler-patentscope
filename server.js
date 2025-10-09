@@ -62,11 +62,12 @@ HTML:
 ${html.slice(0, 8000)}
 `;
 
-    const response = await groq.chat.completions.create({
-      model: "mixtral-8x7b-32768",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-    });
+const response = await groq.chat.completions.create({
+  model: "llama-3.1-70b-versatile",
+  messages: [{ role: "user", content: prompt }],
+  temperature: 0.2,
+});
+
 
     const text = response.choices?.[0]?.message?.content?.trim() || "";
     return { source: "groq", data: [{ parsed_text: text }] };
