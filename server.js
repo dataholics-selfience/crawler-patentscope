@@ -87,3 +87,5 @@ app.get("/api/data/patentscope/patents", async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`🚀 WIPO Parser robusto rodando na porta ${PORT}`));
+
+
