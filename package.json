@@ -1,17 +1,13 @@
 {
   "name": "patent-crawler-platform",
-  "version": "1.3.6",
+  "version": "1.0.0",
   "type": "module",
-  "main": "server.js",
-  "engines": {
-    "node": ">=20.0.0"
-  },
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "puppeteer": "^22.10.0",
-    "cors": "^2.8.5"
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "cheerio": "^1.0.0-rc.12"
   }
 }
