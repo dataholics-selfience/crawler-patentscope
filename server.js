@@ -1,9 +1,38 @@
 // server.js
 import express from "express";
 import cors from "cors";
-import { puppeteerCrawler } from "./crawlers/puppeteerCrawler.js";
-import { playwrightCrawler } from "./crawlers/playwrightCrawler.js";
-import { seleniumCrawler } from "./crawlers/seleniumCrawler.js";
+// imports condicionais / stubs temporários
+let puppeteerCrawler;
+let playwrightCrawler;
+let seleniumCrawler;
+
+try {
+  puppeteerCrawler = (await import("./crawlers/puppeteerCrawler.js")).puppeteerCrawler;
+} catch {
+  puppeteerCrawler = async (medicine) => {
+    console.log("Stub puppeteerCrawler chamado (temporário) para:", medicine);
+    return "<html></html>";
+  };
+}
+
+try {
+  playwrightCrawler = (await import("./crawlers/playwrightCrawler.js")).playwrightCrawler;
+} catch {
+  playwrightCrawler = async (medicine) => {
+    console.log("Stub playwrightCrawler chamado (temporário) para:", medicine);
+    return "<html></html>";
+  };
+}
+
+try {
+  seleniumCrawler = (await import("./crawlers/seleniumCrawler.js")).seleniumCrawler;
+} catch {
+  seleniumCrawler = async (medicine) => {
+    console.log("Stub seleniumCrawler chamado (temporário) para:", medicine);
+    return "<html></html>";
+  };
+}
+
 import { validatePatentHTML } from "./utils/htmlValidator.js";
 
 const app = express();
@@ -38,10 +67,8 @@ app.get("/api/data/patentscope/patents", async (req, res) => {
     return res.status(500).json({ error: "Falha ao buscar dados da WIPO" });
   }
 
-  // Parse HTML e extrair patentes (usando Cheerio, Groq, ou regex leve)
   let results = [];
   try {
-    // parse simples como exemplo
     const cheerio = await import("cheerio");
     const $ = cheerio.load(html);
     $(".result-title a").each((i, el) => {
