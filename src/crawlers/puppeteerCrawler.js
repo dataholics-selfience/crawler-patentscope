@@ -1,4 +1,5 @@
+// src/crawlers/puppeteerCrawler.js
 export async function puppeteerCrawler(medicine) {
-  console.log("Stub puppeteerCrawler chamado para:", medicine);
-  return "<html></html>"; // HTML mínimo válido
+  console.log("puppeteerCrawler chamado com", medicine);
+  return "<html><body>Stub Puppeteer HTML</body></html>";
 }
