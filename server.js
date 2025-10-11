@@ -1,37 +1,63 @@
-// src/server.js
+// server.js
 import express from "express";
 import cors from "cors";
 
-// Apenas import dos crawlers (não executa nada aqui)
-import * as puppeteerCrawler from "./crawlers/puppeteerCrawler.js";
-import * as playwrightCrawler from "./crawlers/playwrightCrawler.js";
-import * as seleniumCrawler from "./crawlers/seleniumCrawler.js";
-import * as validatorCrawler from "./crawlers/validatorCrawler.js";
-import * as retryLoop from "./core/groqRetryLoop.js";
+// Import dos crawlers e orchestrator
+// Certifique-se que todos os arquivos exportam funções corretamente
+import { crawlWithPuppeteer } from "./crawlers/puppeteerCrawler.js";
+import { crawlWithPlaywright } from "./crawlers/playwrightCrawler.js";
+import { crawlWithSelenium } from "./crawlers/seleniumCrawler.js";
+import { validateData } from "./validators/validator.js";
+import { retryLoop } from "./core/retryLoop.js";
+import { orchestrator } from "./core/orchestrator.js";
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 
-// Healthcheck rápido para Railway
+// Healthcheck rápido
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
-// Endpoint para disparar crawlers sequenciais manualmente
+// Endpoint para disparar os crawlers em sequência
 app.post("/start-crawlers", async (req, res) => {
   try {
-    // Aqui você pode chamar seu orchestrator/loops sem travar a inicialização
-    await retryLoop.runAllCrawlers();
-    res.json({ status: "Crawlers started" });
+    console.log("Starting crawler sequence...");
+
+    // Puppeteer
+    console.log("Running Puppeteer crawler...");
+    await crawlWithPuppeteer();
+
+    // Playwright
+    console.log("Running Playwright crawler...");
+    await crawlWithPlaywright();
+
+    // Selenium
+    console.log("Running Selenium crawler...");
+    await crawlWithSelenium();
+
+    // Validator
+    console.log("Validating data...");
+    await validateData();
+
+    // Retry Loop
+    console.log("Running retry loop...");
+    await retryLoop.runAll();
+
+    // Orchestrator final
+    console.log("Running orchestrator...");
+    await orchestrator();
+
+    console.log("Crawler sequence completed.");
+    res.json({ status: "success", message: "All crawlers executed" });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+    console.error("Error during crawler sequence:", err);
+    res.status(500).json({ status: "error", message: err.message });
   }
 });
 
-// Porta do Railway ou fallback para 3000
-const PORT = process.env.PORT || 3000;
-
+// Start do servidor
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
