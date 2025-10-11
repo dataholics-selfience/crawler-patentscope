@@ -2,11 +2,12 @@
 import express from "express";
 import cors from "cors";
 
-// Import dos crawlers (mesmo que ainda sejam stubs)
+// Apenas import dos crawlers (não executa nada aqui)
 import * as puppeteerCrawler from "./crawlers/puppeteerCrawler.js";
 import * as playwrightCrawler from "./crawlers/playwrightCrawler.js";
 import * as seleniumCrawler from "./crawlers/seleniumCrawler.js";
 import * as validatorCrawler from "./crawlers/validatorCrawler.js";
+import * as retryLoop from "./core/groqRetryLoop.js";
 
 const app = express();
 
@@ -16,14 +17,16 @@ app.use(express.json());
 // Healthcheck rápido para Railway
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
-// Endpoint de teste para ver se os crawlers importaram
-app.get("/test", (req, res) => {
-  res.json({
-    puppeteer: !!puppeteerCrawler.crawlWithPuppeteer,
-    playwright: !!playwrightCrawler.crawlWithPlaywright,
-    selenium: !!seleniumCrawler.crawlWithSelenium,
-    validator: !!validatorCrawler.crawlWithValidator
-  });
+// Endpoint para disparar crawlers sequenciais manualmente
+app.post("/start-crawlers", async (req, res) => {
+  try {
+    // Aqui você pode chamar seu orchestrator/loops sem travar a inicialização
+    await retryLoop.runAllCrawlers();
+    res.json({ status: "Crawlers started" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Porta do Railway ou fallback para 3000
