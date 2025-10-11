@@ -2,39 +2,30 @@
 import puppeteer from "puppeteer";
 
 /**
- * Função principal: faz o scraping básico do PatentScope com o termo de medicamento.
- * Se não conseguir, retorna null (permitindo fallback para outros crawlers).
+ * Crawler genérico com Puppeteer
+ * @param {string} url - URL a ser visitada
+ * @returns {Promise<{ html: string, title: string }>}
  */
-export async function puppeteerCrawler(medicine) {
-  console.log(`🧭 PuppeteerCrawler iniciado para: ${medicine}`);
+export async function crawlWithPuppeteer(url) {
+  console.log(`🚀 Puppeteer iniciando scrape de: ${url}`);
 
-  let browser;
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+  const page = await browser.newPage();
+
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-gpu",
-        "--no-zygote",
-        "--single-process"
-      ],
-    });
-
-    const page = await browser.newPage();
-    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`;
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-
-    // Espera algum seletor típico do PatentScope carregar
-    await page.waitForSelector(".result", { timeout: 15000 }).catch(() => null);
-
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     const html = await page.content();
-    console.log(`✅ PuppeteerCrawler finalizado para: ${medicine}`);
-    return html;
+    const title = await page.title();
+
+    console.log(`✅ Puppeteer coletou página: ${title}`);
+    return { html, title };
   } catch (err) {
-    console.error("❌ Erro no PuppeteerCrawler:", err.message);
-    return null;
+    console.error("❌ Erro Puppeteer:", err.message);
+    return { html: "", title: "", error: err.message };
   } finally {
-    if (browser) await browser.close();
+    await browser.close();
   }
 }
