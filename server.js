@@ -1,49 +1,34 @@
+// src/server.js
 import express from "express";
 import cors from "cors";
-import { puppeteerCrawler } from "./src/crawlers/puppeteerCrawler.js";
-import { playwrightCrawler } from "./src/crawlers/playwrightCrawler.js";
-import { seleniumCrawler } from "./src/crawlers/seleniumCrawler.js";
+
+// Import dos crawlers (mesmo que ainda sejam stubs)
+import * as puppeteerCrawler from "./crawlers/puppeteerCrawler.js";
+import * as playwrightCrawler from "./crawlers/playwrightCrawler.js";
+import * as seleniumCrawler from "./crawlers/seleniumCrawler.js";
+import * as validatorCrawler from "./crawlers/validatorCrawler.js";
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 8080;
+// Healthcheck rápido para Railway
+app.get("/health", (req, res) => res.status(200).send("OK"));
 
-app.get("/health", (req, res) => res.json({ status: "ok" }));
-
-app.get("/api/data/patentscope/patents", async (req, res) => {
-  const medicine = req.query.medicine;
-  if (!medicine) return res.status(400).json({ error: "Query param 'medicine' missing" });
-
-  const crawlers = [puppeteerCrawler, playwrightCrawler, seleniumCrawler];
-  let html = null;
-  let source = null;
-
-  for (const crawler of crawlers) {
-    try {
-      html = await crawler(medicine);
-      if (html) { // stub sempre retorna algo
-        source = crawler.name;
-        break;
-      }
-    } catch (err) {
-      console.warn(`Crawler ${crawler.name} falhou: ${err.message}`);
-    }
-  }
-
+// Endpoint de teste para ver se os crawlers importaram
+app.get("/test", (req, res) => {
   res.json({
-    query: medicine,
-    total_results: 1,
-    results: [{ title: "Stub Patent", link: "https://example.com/stub" }],
-    source,
+    puppeteer: !!puppeteerCrawler.crawlWithPuppeteer,
+    playwright: !!playwrightCrawler.crawlWithPlaywright,
+    selenium: !!seleniumCrawler.crawlWithSelenium,
+    validator: !!validatorCrawler.crawlWithValidator
   });
 });
 
-// Importar rota Groq
-import groqRoutes from "./src/routes/groqRoutes.js";
-app.use("/api/groq", groqRoutes);
+// Porta do Railway ou fallback para 3000
+const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => console.log(`🚀 Patent Scope stub rodando na porta ${PORT}`));
-
-
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
