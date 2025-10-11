@@ -1,34 +1,30 @@
 // src/crawlers/playwrightCrawler.js
-import { chromium } from "playwright";
+import playwright from "playwright";
 
 /**
- * PlaywrightCrawler: fallback mais estável que o Puppeteer para páginas com Cloudflare.
+ * Crawler genérico com Playwright
+ * @param {string} url - URL a ser carregada
+ * @returns {Promise<{ html: string, title: string }>}
  */
-export async function playwrightCrawler(medicine) {
-  console.log(`🧭 PlaywrightCrawler iniciado para: ${medicine}`);
+export async function crawlWithPlaywright(url) {
+  console.log(`🚀 Playwright iniciando scrape de: ${url}`);
+  const browser = await playwright.chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+  const page = await browser.newPage();
 
-  let browser;
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
-    });
-
-    const page = await browser.newPage();
-    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`;
-
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
-
-    // Espera um seletor comum de resultados
-    await page.waitForSelector(".result", { timeout: 15000 }).catch(() => null);
-
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     const html = await page.content();
-    console.log(`✅ PlaywrightCrawler finalizado para: ${medicine}`);
-    return html;
+    const title = await page.title();
+
+    console.log(`✅ Playwright coletou página: ${title}`);
+    return { html, title };
   } catch (err) {
-    console.error("❌ Erro no PlaywrightCrawler:", err.message);
-    return null;
+    console.error("❌ Erro Playwright:", err.message);
+    return { html: "", title: "", error: err.message };
   } finally {
-    if (browser) await browser.close();
+    await browser.close();
   }
 }
