@@ -1,32 +1,40 @@
 // src/crawlers/puppeteerCrawler.js
 import puppeteer from "puppeteer";
 
+/**
+ * Função principal: faz o scraping básico do PatentScope com o termo de medicamento.
+ * Se não conseguir, retorna null (permitindo fallback para outros crawlers).
+ */
 export async function puppeteerCrawler(medicine) {
-  console.log(`🔍 Puppeteer iniciando busca na WIPO para: ${medicine}`);
-  const url = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(
-    medicine
-  )}`;
+  console.log(`🧭 PuppeteerCrawler iniciado para: ${medicine}`);
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-
+  let browser;
   try {
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
+        "--no-zygote",
+        "--single-process"
+      ],
+    });
 
-    // Espera elemento-chave (para confirmar carregamento da página)
-    await page.waitForSelector(".result-title a", { timeout: 30000 });
+    const page = await browser.newPage();
+    const searchUrl = `https://patentscope.wipo.int/search/en/result.jsf?query=${encodeURIComponent(medicine)}`;
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+
+    // Espera algum seletor típico do PatentScope carregar
+    await page.waitForSelector(".result", { timeout: 15000 }).catch(() => null);
 
     const html = await page.content();
-    console.log(`✅ Puppeteer retornou HTML válido (${html.length} chars)`);
-
+    console.log(`✅ PuppeteerCrawler finalizado para: ${medicine}`);
     return html;
   } catch (err) {
-    console.error("❌ Erro no Puppeteer:", err.message);
-    throw err;
+    console.error("❌ Erro no PuppeteerCrawler:", err.message);
+    return null;
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
