@@ -40,4 +40,10 @@ app.get("/api/data/patentscope/patents", async (req, res) => {
   });
 });
 
+// Importar rota Groq
+import groqRoutes from "./src/routes/groqRoutes.js";
+app.use("/api/groq", groqRoutes);
+
 app.listen(PORT, () => console.log(`🚀 Patent Scope stub rodando na porta ${PORT}`));
+
+
